@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Kør ikke som root
-RUN adduser --disabled-password --gecos "" appuser
+RUN adduser --disabled-password --gecos "" appuser && \
+    chown -R appuser:appuser /app
 USER appuser
 
 # Health endpoint bruges af Docker og Azure til at tjekke om appen kører
@@ -24,4 +25,6 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
 EXPOSE 5000
 
 # gunicorn er mere stabil end Flask's dev-server i produktion
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]
+EXPOSE 5000
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--worker-tmp-dir", "/tmp", "app:app"]
