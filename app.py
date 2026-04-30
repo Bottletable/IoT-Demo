@@ -1,26 +1,19 @@
-from flask import Flask, jsonify, request # Flask web framework
-import mysql.connector # MySQL database connector
-import os # miljøvariabler
-from dotenv import load_dotenv # indlæs .env filer
+from flask import Flask, jsonify, request
+import mysql.connector
+import os
+from dotenv import load_dotenv
 
-load_dotenv() # indlæs miljøvariabler fra .env fil
+load_dotenv()
 
-app = Flask(__name__) # opret Flask app
+app = Flask(__name__)
 
-def add(a, b): # simpel funktion til CI testning
-    return a + b
-
-def get_connection(): # Opret forbindelse til MySQL-databasen
+def get_connection():
     return mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),          
-        password=os.getenv("DB_PASSWORD"),  
-        database=os.getenv("DB_NAME") 
+        host=os.getenv("DB_HOST", "db"),
+        user=os.getenv("DB_USER", "root"),          
+        password=os.getenv("DB_PASSWORD", "password"),  
+        database=os.getenv("DB_NAME", "flask_demo") 
     )
-
-# CI test: bevidst syntaksfejl
-#def ci_test_function(
-#   return "this will break"
 
 # ---------- BASIC ROUTES ----------
 @app.route("/ping", methods=["GET"])
@@ -31,149 +24,129 @@ def ping():
 def index():
     return "Mini API med MySQL kører. Prøv /api/devices"
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"}), 200
-
-# ---------- DEVICES API (Intelligent IoT Solutions case) ----------
+# ---------- DEVICES API ----------
 
 @app.route("/api/devices", methods=["GET"])
 def get_devices():
     """
-    Hent alle IoT-enheder
+    Henter alle enheder inklusiv de nye domæne-data: battery_health, yaw_error og error_code.
     """
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT id, name, location, status, customer_name, last_seen FROM devices")
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify(rows)
-
-@app.route("/api/devices/<int:device_id>", methods=["GET"])
-def get_device(device_id):
-    """
-    Hent én IoT-enhed
-    """
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute(
-        "SELECT id, name, location, status, customer_name, last_seen FROM devices WHERE id = %s",
-        (device_id,)
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-
-    if row:
-        return jsonify(row)
-    else:
-        return jsonify({"error": "Device not found"}), 404
-
-@app.route("/api/devices", methods=["POST"])
-def create_device():
-    """
-    Opret ny IoT-enhed
-    """
-    data = request.get_json()
-    required_fields = ["name", "location", "status", "customer_name"]
-    if not data or any(f not in data for f in required_fields):
-        return jsonify({"error": f"Missing one of {required_fields}"}), 400
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO devices (name, location, status, customer_name, last_seen)
-        VALUES (%s, %s, %s, %s, NOW())
-        """,
-        (data["name"], data["location"], data["status"], data["customer_name"])
-    )
-    conn.commit()
-    new_id = cursor.lastrowid
-    cursor.close()
-    conn.close()
-
-    new_device = {
-        "id": new_id,
-        "name": data["name"],
-        "location": data["location"],
-        "status": data["status"],
-        "customer_name": data["customer_name"],
-        "last_seen": None  # eller lad frontend lave et nyt GET-kald
-    }
-    return jsonify(new_device), 201
-
-@app.route("/api/devices/<int:device_id>", methods=["PUT"])
-def update_device(device_id):
-    """
-    Opdatér eksisterende IoT-enhed
-    """
-    data = request.get_json()
-    required_fields = ["name", "location", "status", "customer_name"]
-    if not data or any(f not in data for f in required_fields):
-        return jsonify({"error": f"Missing one of {required_fields}"}), 400
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # tjek om device findes
-    cursor.execute("SELECT id FROM devices WHERE id = %s", (device_id,))
-    row = cursor.fetchone()
-    if not row:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        # Vi tilføjer de nye kolonner her i SELECT-sætningen:
+        cursor.execute("""
+            SELECT id, name, location, status, customer_name, last_seen, 
+                   temperature, vibration_level, battery_health, yaw_error, error_code 
+            FROM devices
+        """)
+        rows = cursor.fetchall()
         cursor.close()
         conn.close()
-        return jsonify({"error": "Device not found"}), 404
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    # opdatér
-    cursor.execute(
-        """
-        UPDATE devices
-        SET name = %s,
-            location = %s,
-            status = %s,
-            customer_name = %s,
-            last_seen = NOW()
-        WHERE id = %s
-        """,
-        (data["name"], data["location"], data["status"], data["customer_name"], device_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    updated_device = {
-        "id": device_id,
-        "name": data["name"],
-        "location": data["location"],
-        "status": data["status"],
-        "customer_name": data["customer_name"],
-        # last_seen kan evt. hentes med et nyt GET-kald
-    }
-    return jsonify(updated_device)
-
-@app.route("/api/devices/<int:device_id>", methods=["DELETE"])
-def delete_device(device_id):
+@app.route("/api/devices/diagnostics", methods=["GET"])
+def get_diagnostics():
     """
-    Slet IoT-enhed
+    Enhanced diagnostics based on the new statuses from the Domain Model.
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT id FROM devices WHERE id = %s", (device_id,))
-    row = cursor.fetchone()
-    if not row:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name, status, temperature, vibration_level FROM devices")
+        devices = cursor.fetchall()
+        
+        for device in devices:
+            if device["status"] == "emergency_stop":
+                device["urgency"] = "CRITICAL"
+                device["action"] = "Pitch Control active. High wind safety triggered."
+            elif device["status"] == "misaligned":
+                device["urgency"] = "MEDIUM"
+                device["action"] = "Jaw Control adjustment required for optimal wind capture."
+            elif device["status"] == "low_power":
+                device["urgency"] = "HIGH"
+                device["action"] = "Battery Health critical. Check charging circuit."
+            elif device["status"] == "maintenance" or device["temperature"] > 50:
+                device["urgency"] = "HIGH"
+                device["action"] = "Check gear oil and cooling system."
+            elif device["vibration_level"] == "heavy":
+                device["urgency"] = "CRITICAL"
+                device["action"] = "Mechanical inspection required."
+            else:
+                device["urgency"] = "Low"
+                device["action"] = "Standard monitoring."
+                
         cursor.close()
         conn.close()
-        return jsonify({"error": "Device not found"}), 404
+        return jsonify(devices), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    cursor.execute("DELETE FROM devices WHERE id = %s", (device_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+# ---------- SENSOR EVENT (Merged Business Logic) ----------
 
-    return jsonify({"message": f"Device {device_id} deleted"})
+@app.route("/api/sensor-event", methods=["POST"])
+def sensor_event():
+    data = request.get_json()
+    if not data or "device_id" not in data:
+        return jsonify({"error": "Missing device_id"}), 400
 
-if __name__ == "__main__": # kør Flask app
-    app.run(host="0.0.0.0", debug=True) # kør på alle interfaces i debug mode
+    device_id = data.get("device_id")
+    value = float(data.get("value", 0)) # Wind Speed
+    meta = data.get("metadata", {})
+    
+    temp = float(meta.get("temperature", 0.0))
+    vibration = meta.get("vibration_level", "normal")
+    battery = float(meta.get("battery_health", 100.0)) 
+    yaw_error = float(meta.get("yaw_error", 0.0))     
 
+    # INTELLIGENT STATUS & ERROR LOGIC
+    status = "online"
+    error_code = None
+
+    if value > 90:
+        status = "emergency_stop"
+        error_code = "ERR_WND_03" # Pitch Control safety
+    elif battery < 20:
+        status = "low_power"
+        error_code = "ERR_PWR_05" # Battery Health alert
+    elif yaw_error > 15:
+        status = "misaligned"
+        error_code = "ERR_YAW_04" # Jaw Control adjustment
+    elif vibration == "heavy":
+        status = "maintenance"
+        error_code = "ERR_VIB_01" # Vibration Warn
+    elif temp > 50:
+        status = "maintenance"
+        error_code = "ERR_TMP_02" # Heat Warning
+    
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Note: Added battery_health, yaw_error, and error_code to the UPDATE
+        query = """
+            UPDATE devices 
+            SET status = %s, last_seen = NOW(), temperature = %s, vibration_level = %s,
+                battery_health = %s, yaw_error = %s, error_code = %s
+            WHERE id = %s
+        """
+        cursor.execute(query, (status, temp, vibration, battery, yaw_error, error_code, device_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            "decision": status, 
+            "error_code": error_code,
+            "system_check": {
+                "pitch": "feathered" if status == "emergency_stop" else "active",
+                "battery": battery,
+                "yaw": yaw_error
+            }
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
