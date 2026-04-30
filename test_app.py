@@ -1,13 +1,13 @@
-from app import add
+import pytest
+from app import app
 
-def test_add():
-    assert add(2, 3) == 5
+@pytest.fixture
+def client():
+    with app.test_client() as client:
+        yield client
 
-def test_threshold_logic():
-    # This is a unit test for your decision logic[cite: 1]
-    value_high = 60
-    value_low = 20
-    
-    # Logic check
-    assert (value_high > 50) is True  # Should be maintenance
-    assert (value_low > 50) is False # Should be online
+def test_ping(client):
+    """Tjekker om ping-ruten virker"""
+    rv = client.get('/ping')
+    assert rv.status_code == 200
+    assert b"pong" in rv.data
