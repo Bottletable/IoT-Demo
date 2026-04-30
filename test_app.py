@@ -11,3 +11,6 @@ def test_ping(client):
     rv = client.get('/ping')
     assert rv.status_code == 200
     assert b"pong" in rv.data
+
+# Vi kan tilføje flere tests her, f.eks. for at tjekke om /api/devices returnerer data korrekt.
+
